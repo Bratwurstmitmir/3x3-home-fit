@@ -61,6 +61,11 @@ $appPid = (& adb shell pidof $devPackage 2>&1 | Out-String).Trim()
 if ($appPid) {
     Write-Host ''
     Write-Host "OK: DEV-App laeuft. PID $appPid" -ForegroundColor Green
+    $active = (& adb shell dumpsys activity activities 2>&1 | Select-String -Pattern 'mResumedActivity|topResumedActivity|de\.homefit3x3\.app' | Select-Object -Last 10 | ForEach-Object { $_.Line })
+    if ($active) {
+        Write-Host 'Aktive 3x3-Activity:' -ForegroundColor Cyan
+        $active
+    }
     Write-Host 'Wenn auf dem Samsung noch der Development-Build-Bildschirm steht, einmal Reload antippen.' -ForegroundColor Yellow
 } else {
     Write-Host ''
