@@ -76,9 +76,9 @@ Start-Sleep -Seconds 5
 
 Add-Report ''
 Add-Report '--- Prozessstatus ---'
-$pid = (& adb shell pidof $devPackage 2>&1 | Out-String).Trim()
-if ($pid) {
-    Add-Report "DEV-Prozess laeuft. PID: $pid"
+$appPid = (& adb shell pidof $devPackage 2>&1 | Out-String).Trim()
+if ($appPid) {
+    Add-Report "DEV-Prozess laeuft. PID: $appPid"
 } else {
     Add-Report 'DEV-Prozess laeuft NICHT mehr -> sehr wahrscheinlich Runtime-Crash oder Startproblem.'
 }
