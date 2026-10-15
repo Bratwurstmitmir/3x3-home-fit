@@ -4,10 +4,88 @@ $project = 'C:\Users\patri\Desktop\DCPP DIGITAL\3x3Homefit'
 $prodPackage = 'de.homefit3x3.app'
 $devPackage = 'de.homefit3x3.app.dev'
 $gradlePath = Join-Path $project 'android\app\build.gradle'
+$androidDir = Join-Path $project 'android'
+$apk = Join-Path $project 'android\app\build\outputs\apk\debug\app-debug.apk'
+$buildLog = Join-Path $env:USERPROFILE 'Desktop\3x3-dev-build.log'
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+function Write-Utf8NoBom([string]$Path, [string]$Text) {
+    [System.IO.File]::WriteAllText($Path, $Text, $utf8NoBom)
+}
+
+function Ensure-DebugGoogleServices {
+    $debugDir = Join-Path $project 'android\app\src\debug'
+    $debugFile = Join-Path $debugDir 'google-services.json'
+    New-Item -ItemType Directory -Path $debugDir -Force | Out-Null
+
+    $candidates = @(
+        (Join-Path $project 'android\app\google-services.json'),
+        (Join-Path $project 'google-services.json')
+    )
+
+    $base = $null
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) {
+            $raw = Get-Content -LiteralPath $candidate -Raw
+            if ($raw.Contains($prodPackage)) {
+                $base = $candidate
+                break
+            }
+        }
+    }
+
+    if (-not $base) {
+        $found = Get-ChildItem -LiteralPath $project -Filter 'google-services.json' -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.FullName -notmatch '\\node_modules\\|\\build\\|\\_BACKUP-' -and
+                $_.FullName -ne $debugFile
+            } |
+            Select-Object -First 1
+        if ($found) { $base = $found.FullName }
+    }
+
+    if (-not $base) {
+        Write-Host 'INFO: Keine google-services.json gefunden. Dieser Schritt wird uebersprungen.' -ForegroundColor Yellow
+        return
+    }
+
+    $raw = Get-Content -LiteralPath $base -Raw
+    if (-not $raw.Contains($prodPackage)) {
+        Write-Host "INFO: Firebase-Datei gefunden, aber Produktions-Paketname fehlt: $base" -ForegroundColor Yellow
+        return
+    }
+
+    $devRaw = $raw.Replace($prodPackage, $devPackage)
+    Write-Utf8NoBom $debugFile $devRaw
+
+    try {
+        $null = Get-Content -LiteralPath $debugFile -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "Debug google-services.json ist ungueltig: $($_.Exception.Message)"
+    }
+
+    Write-Host "OK: Debug-Firebase-Konfiguration ohne BOM erzeugt: $debugFile" -ForegroundColor Green
+}
+
+function Run-GradleBuild {
+    if (Test-Path -LiteralPath $buildLog) {
+        Remove-Item -LiteralPath $buildLog -Force -ErrorAction SilentlyContinue
+    }
+
+    Push-Location $androidDir
+    try {
+        & .\gradlew.bat app:assembleDebug -x lint -x test --configure-on-demand --build-cache -PreactNativeDevServerPort=8081 -PreactNativeArchitectures=arm64-v8a --console=plain 2>&1 | Tee-Object -FilePath $buildLog
+        return $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
+}
 
 Write-Host ''
-Write-Host '3x3 HOME FIT - SAMSUNG DEV SETUP' -ForegroundColor Cyan
-Write-Host 'Die bestehende App bleibt unangetastet. Debug wird parallel als .dev installiert.' -ForegroundColor DarkGray
+Write-Host '3x3 HOME FIT - SAMSUNG DEV SETUP V2' -ForegroundColor Cyan
+Write-Host 'Production-App bleibt unangetastet. DEV-App wird parallel installiert.' -ForegroundColor DarkGray
 Write-Host ''
 
 if (!(Test-Path -LiteralPath $project)) {
@@ -23,9 +101,15 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $backupDir = Join-Path $project "_BACKUP-DEV-SAMSUNG-$stamp"
 New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
 Copy-Item -LiteralPath $gradlePath -Destination (Join-Path $backupDir 'build.gradle') -Force
+
+$oldDebugGs = Join-Path $project 'android\app\src\debug\google-services.json'
+if (Test-Path -LiteralPath $oldDebugGs) {
+    Copy-Item -LiteralPath $oldDebugGs -Destination (Join-Path $backupDir 'google-services-debug.json') -Force
+}
 Write-Host "OK: Backup erstellt: $backupDir" -ForegroundColor Green
 
 $text = Get-Content -LiteralPath $gradlePath -Raw
+
 if ($text -notmatch 'applicationIdSuffix\s+["'']\.dev["'']') {
     $buildTypes = [regex]::Match($text, '(?m)^\s*buildTypes\s*\{')
     if (!$buildTypes.Success) {
@@ -44,34 +128,14 @@ if ($text -notmatch 'applicationIdSuffix\s+["'']\.dev["'']') {
     $nl = [Environment]::NewLine
     $insert = $nl + $indent + 'applicationIdSuffix ".dev"' + $nl + $indent + 'versionNameSuffix "-dev"'
     $text = $text.Insert($insertAt, $insert)
-    Set-Content -LiteralPath $gradlePath -Value $text -Encoding UTF8
     Write-Host "OK: Debug-Paket auf $devPackage getrennt." -ForegroundColor Green
 }
 else {
     Write-Host 'OK: Debug-Paket ist bereits auf .dev getrennt.' -ForegroundColor Green
 }
 
-$googleServices = Join-Path $project 'android\app\google-services.json'
-$debugGoogleServicesDir = Join-Path $project 'android\app\src\debug'
-$debugGoogleServices = Join-Path $debugGoogleServicesDir 'google-services.json'
-
-if (Test-Path -LiteralPath $googleServices) {
-    New-Item -ItemType Directory -Path $debugGoogleServicesDir -Force | Out-Null
-
-    if (Test-Path -LiteralPath $debugGoogleServices) {
-        Copy-Item -LiteralPath $debugGoogleServices -Destination (Join-Path $backupDir 'google-services-debug.json') -Force
-    }
-
-    $gsText = Get-Content -LiteralPath $googleServices -Raw
-    if ($gsText.Contains($prodPackage)) {
-        $gsText = $gsText.Replace($prodPackage, $devPackage)
-        Set-Content -LiteralPath $debugGoogleServices -Value $gsText -Encoding UTF8
-        Write-Host 'OK: Debug google-services.json fuer .dev erzeugt.' -ForegroundColor Green
-    }
-    else {
-        Write-Host 'INFO: google-services.json enthaelt den Produktions-Paketnamen nicht. Keine Aenderung noetig.' -ForegroundColor Yellow
-    }
-}
+Write-Utf8NoBom $gradlePath $text
+Ensure-DebugGoogleServices
 
 Write-Host ''
 Write-Host 'Pruefe Expo...' -ForegroundColor Cyan
@@ -91,18 +155,36 @@ Write-Host 'OK: Samsung erkannt.' -ForegroundColor Green
 
 Write-Host ''
 Write-Host 'Baue 3x3 HOME FIT DEV...' -ForegroundColor Cyan
-Push-Location (Join-Path $project 'android')
-try {
-    & .\gradlew.bat app:assembleDebug -x lint -x test --configure-on-demand --build-cache -PreactNativeDevServerPort=8081 -PreactNativeArchitectures=arm64-v8a
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Gradle-Build fehlgeschlagen.'
-    }
-}
-finally {
-    Pop-Location
+$code = Run-GradleBuild
+
+if ($code -ne 0) {
+    Write-Host ''
+    Write-Host 'Erster Build fehlgeschlagen. Reparaturversuch fuer Debug-Firebase-Konfiguration...' -ForegroundColor Yellow
+    Ensure-DebugGoogleServices
+    $code = Run-GradleBuild
 }
 
-$apk = Join-Path $project 'android\app\build\outputs\apk\debug\app-debug.apk'
+if ($code -ne 0) {
+    Write-Host ''
+    Write-Host 'BUILD FEHLGESCHLAGEN - die echte Ursache folgt jetzt automatisch:' -ForegroundColor Red
+
+    if (Test-Path -LiteralPath $buildLog) {
+        $patterns = 'FAILURE:|What went wrong:|Execution failed for task|Caused by:|No matching client|google-services|error:|Exception|FAILED'
+        Select-String -Path $buildLog -Pattern $patterns -Context 3,8 |
+            Select-Object -Last 100 |
+            ForEach-Object { $_.ToString() }
+
+        Write-Host ''
+        Write-Host '----- LETZTE 180 LOG-ZEILEN -----' -ForegroundColor Yellow
+        Get-Content -LiteralPath $buildLog -Tail 180
+
+        Write-Host ''
+        Write-Host "Vollstaendiger Build-Log liegt hier: $buildLog" -ForegroundColor Cyan
+    }
+
+    throw 'Gradle-Build fehlgeschlagen. Oben steht jetzt die konkrete Ursache.'
+}
+
 if (!(Test-Path -LiteralPath $apk)) {
     throw "Debug-APK nicht gefunden: $apk"
 }
