@@ -47,11 +47,12 @@ Write-Host ''
 Write-Host '3x3 HOME FIT - VERBINDE DEV-APP MIT METRO' -ForegroundColor Cyan
 Write-Host "Scheme: $scheme" -ForegroundColor DarkGray
 Write-Host 'USB-Port 8081 ist verbunden.' -ForegroundColor Green
+Write-Host "Ich erzwinge DEV-Paket: $devPackage (kein App-Auswahldialog)." -ForegroundColor Green
 
 & adb shell am force-stop $devPackage | Out-Null
 Start-Sleep -Milliseconds 500
 
-$result = & adb shell am start -W -a android.intent.action.VIEW -d $uri 2>&1
+$result = & adb shell am start -W -a android.intent.action.VIEW -d $uri -p $devPackage 2>&1
 $result
 
 Start-Sleep -Seconds 3
