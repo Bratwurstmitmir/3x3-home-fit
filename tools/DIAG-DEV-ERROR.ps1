@@ -75,8 +75,9 @@ Start-Sleep -Seconds 2
 
 Add-Report ''
 Add-Report '--- 4. Metro kontrolliert starten ---'
+$env:CI = '1'
 $metroArgs = @(
-    'expo','start','--dev-client','--localhost','--clear','--non-interactive'
+    'expo','start','--dev-client','--localhost','--clear'
 )
 $metro = Start-Process -FilePath 'npx.cmd' -ArgumentList $metroArgs -WorkingDirectory $project -PassThru -RedirectStandardOutput $metroOut -RedirectStandardError $metroErr
 Add-Report ("Metro PID: " + $metro.Id)
